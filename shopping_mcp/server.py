@@ -8,6 +8,14 @@ from mcp.server.fastmcp import FastMCP
 
 log = logging.getLogger(__name__)
 
+_browser_available: bool = True
+
+
+def set_browser_available(available: bool) -> None:
+    global _browser_available
+    _browser_available = available
+
+
 from .detail_extractor import ProductDetailExtractor
 from .naver_api import NaverShoppingClient
 

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
+import threading
 from functools import lru_cache
 from typing import Any
 
@@ -17,6 +20,47 @@ _browser_available: bool = True
 def set_browser_available(available: bool) -> None:
     global _browser_available
     _browser_available = available
+
+
+def _read_available_memory_bytes() -> int | None:
+    """Read available memory from /proc/meminfo (Linux only)."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    match = re.search(r"(\d+)", line)
+                    if match:
+                        return int(match.group(1)) * 1024  # kB -> bytes
+    except OSError:
+        pass
+    return None
+
+
+def _calculate_slots(available_bytes: int | None = None) -> int:
+    """Determine max concurrent browser slots from available memory."""
+    env_override = os.getenv("MAX_BROWSER_SLOTS", "").strip()
+    if env_override.isdigit() and int(env_override) > 0:
+        return int(env_override)
+
+    if available_bytes is None:
+        available_bytes = _read_available_memory_bytes()
+
+    if available_bytes is None:
+        return 1  # unknown system, be conservative
+
+    gb = available_bytes / (1024 ** 3)
+    if gb < 1:
+        return 1
+    if gb < 2:
+        return 2
+    return 3
+
+
+_browser_slots = _calculate_slots()
+_browser_semaphore = threading.Semaphore(_browser_slots)
+
+_BUSY_ERROR = {"error": "Server busy \u2013 all browser slots in use. Try again shortly."}
+_NO_BROWSER_ERROR = {"error": "Chromium is not available. Install chromium and restart the server."}
 
 
 mcp = FastMCP(
@@ -59,6 +103,7 @@ def search_naver_products(
         filter: e.g. naverpay.
         exclude: e.g. used:rental:cbshop.
     """
+    log.info("search_naver_products query=%s", query)
     return get_naver_client().search(
         query=query,
         display=display,
@@ -79,6 +124,7 @@ def search_naver_products_raw(
     exclude: str | None = None,
 ) -> dict[str, Any]:
     """Return the near-raw JSON response from Naver Shopping API."""
+    log.info("search_naver_products_raw query=%s", query)
     return get_naver_client().search_raw(
         query=query,
         display=display,
@@ -106,13 +152,25 @@ def get_product_detail(
         save_debug: Save HTML/screenshot under DEBUG_CAPTURE_DIR.
         reset_browser: Restart browser before opening the page.
     """
-    return get_detail_extractor().extract(
-        url,
-        wait_seconds=wait_seconds,
-        max_description_chars=max_description_chars,
-        save_debug=save_debug,
-        reset_browser=reset_browser,
-    )
+    if not _browser_available:
+        return _NO_BROWSER_ERROR
+    if not _browser_semaphore.acquire(timeout=60):
+        log.warning("Browser semaphore timeout for get_product_detail url=%s", url)
+        return _BUSY_ERROR
+    try:
+        log.info("get_product_detail url=%s", url)
+        return get_detail_extractor().extract(
+            url,
+            wait_seconds=wait_seconds,
+            max_description_chars=max_description_chars,
+            save_debug=save_debug,
+            reset_browser=reset_browser,
+        )
+    except Exception:
+        log.error("get_product_detail failed url=%s", url, exc_info=True)
+        return {"error": f"Failed to extract detail from {url}"}
+    finally:
+        _browser_semaphore.release()
 
 
 @mcp.tool()
@@ -133,6 +191,10 @@ def search_then_fetch_detail(
         pick: 1-based index from the search results.
         display: Number of candidates to fetch from search.
     """
+    if not _browser_available:
+        return _NO_BROWSER_ERROR
+
+    log.info("search_then_fetch_detail query=%s pick=%d", query, pick)
     search = get_naver_client().search(
         query=query,
         display=display,
@@ -149,27 +211,50 @@ def search_then_fetch_detail(
     if index >= len(items):
         index = 0
     picked = items[index]
-    detail = get_detail_extractor().extract(
-        picked["link"],
-        wait_seconds=wait_seconds,
-        save_debug=save_debug,
-    )
+
+    if not _browser_semaphore.acquire(timeout=60):
+        log.warning("Browser semaphore timeout for search_then_fetch_detail query=%s", query)
+        return {"search": search, "picked": picked, "detail": None, "error": "Server busy \u2013 all browser slots in use."}
+    try:
+        detail = get_detail_extractor().extract(
+            picked["link"],
+            wait_seconds=wait_seconds,
+            save_debug=save_debug,
+        )
+    except Exception:
+        log.error("search_then_fetch_detail extract failed query=%s", query, exc_info=True)
+        detail = {"error": f"Failed to extract detail from {picked['link']}"}
+    finally:
+        _browser_semaphore.release()
+
     return {"search": search, "picked": picked, "detail": detail}
 
 
 @mcp.tool()
 def capture_product_page(url: str, wait_seconds: float = 2.5) -> dict[str, Any]:
     """Capture page HTML and screenshot for debugging extractors."""
-    detail = get_detail_extractor().extract(
-        url,
-        wait_seconds=wait_seconds,
-        save_debug=True,
-        max_description_chars=1200,
-    )
-    return {
-        "source_url": detail.get("source_url"),
-        "title": detail.get("title"),
-        "debug_capture": detail.get("debug_capture"),
-        "adapter": detail.get("adapter"),
-        "jsonld_product_count": detail.get("jsonld_product_count"),
-    }
+    if not _browser_available:
+        return _NO_BROWSER_ERROR
+    if not _browser_semaphore.acquire(timeout=60):
+        log.warning("Browser semaphore timeout for capture_product_page url=%s", url)
+        return _BUSY_ERROR
+    try:
+        log.info("capture_product_page url=%s", url)
+        detail = get_detail_extractor().extract(
+            url,
+            wait_seconds=wait_seconds,
+            save_debug=True,
+            max_description_chars=1200,
+        )
+        return {
+            "source_url": detail.get("source_url"),
+            "title": detail.get("title"),
+            "debug_capture": detail.get("debug_capture"),
+            "adapter": detail.get("adapter"),
+            "jsonld_product_count": detail.get("jsonld_product_count"),
+        }
+    except Exception:
+        log.error("capture_product_page failed url=%s", url, exc_info=True)
+        return {"error": f"Failed to capture page {url}"}
+    finally:
+        _browser_semaphore.release()

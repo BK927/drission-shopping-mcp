@@ -71,11 +71,14 @@ async def lifespan(_app: Starlette):
 
     host = os.getenv("FASTMCP_HOST", "127.0.0.1")
     port = os.getenv("FASTMCP_PORT", "8000")
+    from .server import _browser_slots
+
     log.info(
-        "Shopping MCP ready — host=%s port=%s browser=%s",
+        "Shopping MCP ready — host=%s port=%s browser=%s max_browser_slots=%d",
         host,
         port,
         "yes" if status["browser_available"] else "no",
+        _browser_slots,
     )
 
     async with mcp.session_manager.run():

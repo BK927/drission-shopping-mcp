@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+
+log = logging.getLogger(__name__)
 
 from .detail_extractor import ProductDetailExtractor
 from .naver_api import NaverShoppingClient

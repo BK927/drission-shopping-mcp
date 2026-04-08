@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -7,6 +8,8 @@ from typing import Any
 import httpx
 
 from .utils import clean_html_text, parse_price
+
+log = logging.getLogger(__name__)
 
 NAVER_SHOPPING_API_URL = "https://openapi.naver.com/v1/search/shop.json"
 
@@ -85,7 +88,11 @@ class NaverShoppingClient:
 
         with httpx.Client(timeout=self.timeout) as client:
             response = client.get(self.base_url, params=params, headers=self._headers())
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError:
+                log.error("Naver API error: %s %s", response.status_code, response.text[:200])
+                raise
             data = response.json()
 
         return {
@@ -114,5 +121,9 @@ class NaverShoppingClient:
 
         with httpx.Client(timeout=self.timeout) as client:
             response = client.get(self.base_url, params=params, headers=self._headers())
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError:
+                log.error("Naver API error: %s %s", response.status_code, response.text[:200])
+                raise
             return response.json()

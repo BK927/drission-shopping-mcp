@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -82,13 +85,19 @@ class BrowserManager:
 
             from DrissionPage import ChromiumPage
 
+            log.info("Starting Chromium browser")
             options = self._build_options()
-            self._page = ChromiumPage(options)
+            try:
+                self._page = ChromiumPage(options)
+            except Exception:
+                log.error("Failed to start Chromium browser", exc_info=True)
+                raise
             return self._page
 
     def reset(self) -> None:
         with self._lock:
             if self._page is not None:
+                log.info("Resetting browser")
                 try:
                     self._page.quit()
                 except Exception:

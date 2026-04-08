@@ -61,7 +61,7 @@ async def lifespan(_app: Starlette):
 
     if not status["api_keys_ok"]:
         log.error("Shutting down — missing API keys")
-        sys.exit(1)
+        sys.exit(1)  # SystemExit before yield is safe: uvicorn catches it at process level
 
     if not status["browser_available"]:
         from .server import set_browser_available

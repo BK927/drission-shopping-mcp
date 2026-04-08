@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from unittest.mock import patch
 
 
 def test_startup_exits_without_api_keys(monkeypatch):

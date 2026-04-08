@@ -1,0 +1,15 @@
+# Locally-managed Cloudflare Tunnel example.
+# Recommended path on Raspberry Pi: /etc/cloudflared/config.yml
+# Replace the placeholders before use.
+
+tunnel: YOUR_TUNNEL_UUID
+credentials-file: /etc/cloudflared/YOUR_TUNNEL_UUID.json
+
+ingress:
+  - hostname: mcp.example.com
+    service: http://127.0.0.1:8000
+    originRequest:
+      noTLSVerify: true
+      connectTimeout: 30s
+      httpHostHeader: 127.0.0.1
+  - service: http_status:404

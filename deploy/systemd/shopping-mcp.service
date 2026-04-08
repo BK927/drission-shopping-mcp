@@ -1,0 +1,16 @@
+[Unit]
+Description=Drission Shopping MCP
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/drission-shopping-mcp
+EnvironmentFile=/home/pi/drission-shopping-mcp/.env
+ExecStart=/home/pi/drission-shopping-mcp/.venv/bin/python -m shopping_mcp.asgi
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

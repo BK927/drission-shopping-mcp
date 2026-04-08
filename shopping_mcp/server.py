@@ -39,8 +39,12 @@ def _read_available_memory_bytes() -> int | None:
 def _calculate_slots(available_bytes: int | None = None) -> int:
     """Determine max concurrent browser slots from available memory."""
     env_override = os.getenv("MAX_BROWSER_SLOTS", "").strip()
-    if env_override.isdigit() and int(env_override) > 0:
-        return int(env_override)
+    try:
+        val = int(env_override)
+        if val > 0:
+            return val
+    except ValueError:
+        pass
 
     if available_bytes is None:
         available_bytes = _read_available_memory_bytes()
@@ -153,10 +157,10 @@ def get_product_detail(
         reset_browser: Restart browser before opening the page.
     """
     if not _browser_available:
-        return _NO_BROWSER_ERROR
+        return {**_NO_BROWSER_ERROR}
     if not _browser_semaphore.acquire(timeout=60):
         log.warning("Browser semaphore timeout for get_product_detail url=%s", url)
-        return _BUSY_ERROR
+        return {**_BUSY_ERROR}
     try:
         log.info("get_product_detail url=%s", url)
         return get_detail_extractor().extract(
@@ -192,7 +196,7 @@ def search_then_fetch_detail(
         display: Number of candidates to fetch from search.
     """
     if not _browser_available:
-        return _NO_BROWSER_ERROR
+        return {**_NO_BROWSER_ERROR}
 
     log.info("search_then_fetch_detail query=%s pick=%d", query, pick)
     search = get_naver_client().search(
@@ -214,7 +218,7 @@ def search_then_fetch_detail(
 
     if not _browser_semaphore.acquire(timeout=60):
         log.warning("Browser semaphore timeout for search_then_fetch_detail query=%s", query)
-        return {"search": search, "picked": picked, "detail": None, "error": "Server busy \u2013 all browser slots in use."}
+        return {"search": search, "picked": picked, "detail": None, "error": "Server busy \u2013 all browser slots in use. Try again shortly."}
     try:
         detail = get_detail_extractor().extract(
             picked["link"],
@@ -234,10 +238,10 @@ def search_then_fetch_detail(
 def capture_product_page(url: str, wait_seconds: float = 2.5) -> dict[str, Any]:
     """Capture page HTML and screenshot for debugging extractors."""
     if not _browser_available:
-        return _NO_BROWSER_ERROR
+        return {**_NO_BROWSER_ERROR}
     if not _browser_semaphore.acquire(timeout=60):
         log.warning("Browser semaphore timeout for capture_product_page url=%s", url)
-        return _BUSY_ERROR
+        return {**_BUSY_ERROR}
     try:
         log.info("capture_product_page url=%s", url)
         detail = get_detail_extractor().extract(

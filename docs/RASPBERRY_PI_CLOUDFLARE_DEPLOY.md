@@ -170,18 +170,15 @@ OpenAI 문서 기준으로 ChatGPT에서 커넥터를 만들 때는 **public `/m
 Connector URL: https://mcp.example.com/mcp
 ```
 
-## 6.5. 보안 체크리스트 (공개 엔드포인트용)
+## 6.5. 보안 설정 (공개 엔드포인트용)
 
-공개 HTTPS로 띄우는 순간 `/mcp`는 누구나 호출을 시도할 수 있다고 가정하세요. 아래 세 가지는 **반드시** 적용하는 것을 권장합니다.
+공개 HTTPS 로 띄우는 순간 `/mcp` 는 누구나 호출을 시도할 수 있다고 가정하세요. **상세 위협 모델, 체크리스트, 사고 대응은 [../docs/SECURITY.md](SECURITY.md) 에 따로 정리** 되어 있습니다. 배포 전 그쪽을 한 번 훑어보세요.
 
-1. **`MCP_AUTH_TOKEN` 설정.** 빈 값이면 앱이 경고 로그를 내고 `/mcp`를 무인증으로 엽니다. 토큰이 있으면 `Authorization: Bearer <token>` 없는 요청은 401. ChatGPT 커넥터에도 동일 토큰을 등록하세요.
-2. **Cloudflare Access (Zero Trust) 정책.** Named Tunnel의 hostname에 Access 애플리케이션을 붙여 "특정 이메일 / 서비스 토큰만 허용" 규칙을 걸면, Bearer 토큰 누출 시에도 한 겹 더 막힙니다. Cloudflare 대시보드 → Zero Trust → Access → Applications.
-3. **허용 호스트 제한.** 기본값은 네이버 쇼핑 도메인만. 다른 쇼핑몰을 추가해야 하면 `ALLOWED_PRODUCT_HOSTS`에 명시적으로 넣으세요. 값이 있으면 **기본값을 전부 대체**합니다 (실수로 전체 열기 방지).
+**딱 필요한 최소 3가지 요약**:
 
-추가로 권장:
-
-- `DP_NO_SANDBOX=true` 는 **기본 활성** 상태. Chromium 렌더러 샌드박스를 끄므로 악성 페이지가 Pi를 장악할 수 있는 벡터입니다. MCP_AUTH_TOKEN과 URL allowlist가 그 앞을 막고 있지만, 장기적으로는 사용자를 분리하거나 `DP_NO_SANDBOX=false` 로 돌릴 수 있는 환경을 고민해 주세요.
-- `deploy/systemd/shopping-mcp.service`에는 `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`, `ProtectHome=read-only` 등 하드닝이 걸려 있습니다. 커스텀 경로를 쓴다면 `ReadWritePaths=`를 맞춰 수정하세요.
+1. **`MCP_AUTH_TOKEN` 생성 + `chmod 600 .env`** — 토큰 비어있으면 앱이 `127.0.0.1` 에만 바인딩하도록 fail-closed.
+2. **Cloudflare Access 정책** 을 Named Tunnel hostname 에 건다 — Bearer 토큰 앞의 zero-trust 레이어.
+3. **`sudo apt upgrade` 월 1회** — Chromium 을 최신으로. `--no-sandbox` 상태라 이게 마지막 방어선.
 
 ## 7. 운영 팁
 

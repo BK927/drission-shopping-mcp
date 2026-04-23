@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from bs4 import BeautifulSoup
 
-from ..utils import clip_text, normalize_text, parse_price
+from ..utils import absolutize_url, clip_text, normalize_text, parse_price
 
 
 SMARTSTORE_SCRIPT_HINTS = [
@@ -13,7 +13,7 @@ SMARTSTORE_SCRIPT_HINTS = [
 ]
 
 
-def extract_naver_store_dom(soup: BeautifulSoup) -> dict:
+def extract_naver_store_dom(soup: BeautifulSoup, *, base_url: str = "") -> dict:
     def first_text(*selectors: str) -> str | None:
         for selector in selectors:
             node = soup.select_one(selector)
@@ -52,8 +52,11 @@ def extract_naver_store_dom(soup: BeautifulSoup) -> dict:
     images: list[str] = []
     for node in soup.select("img[src]"):
         src = node.get("src")
-        if src and src not in images:
-            images.append(src)
+        if not src:
+            continue
+        absolute = absolutize_url(src, base_url)
+        if absolute not in images:
+            images.append(absolute)
         if len(images) >= 15:
             break
 

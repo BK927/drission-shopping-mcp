@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 
 PRICE_RE = re.compile(r"([0-9][0-9,]{0,20})")
@@ -88,6 +88,22 @@ def is_naver_store_domain(url: str) -> bool:
             "store.naver.com",
         )
     )
+
+
+def absolutize_url(url: str, base_url: str) -> str:
+    """Turn a possibly-relative URL into an absolute one using base_url.
+
+    Falls back to the original value when base_url is empty or either value
+    is malformed — callers get back something they can still show.
+    """
+    if not url:
+        return url
+    if not base_url:
+        return url
+    try:
+        return urljoin(base_url, url)
+    except Exception:
+        return url
 
 
 def strip_noise_from_html(value: str) -> str:

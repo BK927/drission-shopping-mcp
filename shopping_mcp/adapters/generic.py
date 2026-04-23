@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from bs4 import BeautifulSoup
 
-from ..utils import clip_text, normalize_text, parse_price
+from ..utils import absolutize_url, clip_text, normalize_text, parse_price
 
 
-def extract_generic_dom(soup: BeautifulSoup) -> dict:
+def extract_generic_dom(soup: BeautifulSoup, *, base_url: str = "") -> dict:
     def meta(*keys: str) -> str | None:
         for key in keys:
             tag = soup.find("meta", attrs={"property": key}) or soup.find("meta", attrs={"name": key})
@@ -39,8 +39,11 @@ def extract_generic_dom(soup: BeautifulSoup) -> dict:
     ]:
         for node in soup.select(selector):
             url = node.get("content") or node.get("src")
-            if url and url not in image_candidates:
-                image_candidates.append(url)
+            if not url:
+                continue
+            absolute = absolutize_url(url, base_url)
+            if absolute not in image_candidates:
+                image_candidates.append(absolute)
             if len(image_candidates) >= 12:
                 break
         if len(image_candidates) >= 12:

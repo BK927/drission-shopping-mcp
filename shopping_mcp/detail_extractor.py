@@ -14,6 +14,7 @@ from .adapters.generic import extract_generic_dom
 from .adapters.naver_smartstore import extract_naver_store_dom
 from .browser import BrowserManager
 from .utils import (
+    absolutize_url,
     clip_text,
     domain_for_url,
     ensure_dir,
@@ -170,12 +171,15 @@ class ProductDetailExtractor:
                     result[key] = merged
         return result
 
-    def _build_dom_fallback(self, soup: BeautifulSoup, dom_probe: dict[str, Any]) -> dict[str, Any]:
-        generic = extract_generic_dom(soup)
+    def _build_dom_fallback(
+        self, soup: BeautifulSoup, dom_probe: dict[str, Any], base_url: str
+    ) -> dict[str, Any]:
+        generic = extract_generic_dom(soup, base_url=base_url)
         if dom_probe.get("title") and not generic.get("title"):
             generic["title"] = dom_probe["title"]
         if dom_probe.get("images"):
-            generic["images"] = list(dict.fromkeys((generic.get("images") or []) + dom_probe["images"]))
+            probe_images = [absolutize_url(u, base_url) for u in dom_probe["images"] if u]
+            generic["images"] = list(dict.fromkeys((generic.get("images") or []) + probe_images))
         if dom_probe.get("options") and not generic.get("options"):
             generic["options"] = dom_probe["options"][:20]
         if dom_probe.get("tableRows") and not generic.get("specs"):
@@ -186,7 +190,7 @@ class ProductDetailExtractor:
 
     def _site_adapter(self, url: str, soup: BeautifulSoup) -> dict[str, Any]:
         if is_naver_store_domain(url):
-            return extract_naver_store_dom(soup)
+            return extract_naver_store_dom(soup, base_url=url)
         return {}
 
     def _save_debug(self, url: str, html_text: str, page: Any) -> dict[str, str]:
@@ -225,8 +229,10 @@ class ProductDetailExtractor:
 
         jsonld_products = self._load_jsonld_products(dom_probe.get("jsonLd", []))
         jsonld_result = self._extract_jsonld(jsonld_products)
+        if jsonld_result.get("images"):
+            jsonld_result["images"] = [absolutize_url(u, url) for u in jsonld_result["images"] if u]
         adapter_result = self._site_adapter(url, soup)
-        fallback_result = self._build_dom_fallback(soup, dom_probe)
+        fallback_result = self._build_dom_fallback(soup, dom_probe, url)
         merged = self._merge(jsonld_result, adapter_result, fallback_result)
 
         description = merged.get("description") or ""

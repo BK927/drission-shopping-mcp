@@ -22,12 +22,16 @@ from .utils import (
     load_json_maybe,
     normalize_text,
     parse_price,
+    prune_capture_dir,
 )
 
 log = logging.getLogger(__name__)
 
 
 class ProductDetailExtractor:
+    # Number of most-recent capture subdirectories to keep on disk.
+    MAX_DEBUG_CAPTURES = 50
+
     def __init__(self, browser: BrowserManager | None = None) -> None:
         self.browser = browser or BrowserManager()
         self.debug_dir = ensure_dir(os.getenv("DEBUG_CAPTURE_DIR", "./debug_captures"))
@@ -209,6 +213,10 @@ class ProductDetailExtractor:
             page.get_screenshot(str(png_path))
         except Exception:
             pass
+        # Cap the on-disk capture history so a looping caller can't fill the
+        # SD card. Pruning runs after the new dir is created so we never
+        # delete what we just wrote.
+        prune_capture_dir(self.debug_dir, keep=self.MAX_DEBUG_CAPTURES)
         return {"html_path": str(html_path), "screenshot_path": str(png_path)}
 
     def extract(

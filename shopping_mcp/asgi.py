@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import contextlib
+import hmac
 import logging
 import os
 import shutil
 import sys
 
 from starlette.applications import Starlette
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 import uvicorn
@@ -52,6 +54,41 @@ def validate_startup() -> dict:
 
 async def healthz(_request):
     return JSONResponse({"status": "ok"})
+
+
+_BEARER_PREFIX = "Bearer "
+
+
+def _is_request_authorized(expected_token: str, auth_header: str | None) -> bool:
+    """Constant-time Bearer token check.
+
+    `expected_token` comes from MCP_AUTH_TOKEN; `auth_header` is the raw
+    Authorization header value. Comparison uses hmac.compare_digest so we
+    don't leak a timing oracle to remote clients.
+    """
+    if not expected_token:
+        return False
+    if not auth_header or not auth_header.startswith(_BEARER_PREFIX):
+        return False
+    presented = auth_header[len(_BEARER_PREFIX):].strip()
+    if not presented:
+        return False
+    return hmac.compare_digest(presented, expected_token)
+
+
+class BearerAuthMiddleware(BaseHTTPMiddleware):
+    """Gate /mcp behind a shared token. /healthz stays open for probes."""
+
+    def __init__(self, app, token: str) -> None:
+        super().__init__(app)
+        self._token = token
+
+    async def dispatch(self, request, call_next):
+        if request.url.path == "/healthz":
+            return await call_next(request)
+        if not _is_request_authorized(self._token, request.headers.get("authorization")):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return await call_next(request)
 
 
 def _shutdown_browser() -> None:
@@ -101,13 +138,26 @@ async def lifespan(_app: Starlette):
         _shutdown_browser()
 
 
-app = Starlette(
-    routes=[
-        Route("/healthz", healthz),
-        Mount("/mcp", app=mcp.streamable_http_app()),
-    ],
-    lifespan=lifespan,
-)
+def _build_app() -> Starlette:
+    token = os.getenv("MCP_AUTH_TOKEN", "").strip()
+    starlette_app = Starlette(
+        routes=[
+            Route("/healthz", healthz),
+            Mount("/mcp", app=mcp.streamable_http_app()),
+        ],
+        lifespan=lifespan,
+    )
+    if token:
+        starlette_app.add_middleware(BearerAuthMiddleware, token=token)
+    else:
+        log.warning(
+            "MCP_AUTH_TOKEN is not set — /mcp is OPEN. "
+            "Put the server behind Cloudflare Access, or set MCP_AUTH_TOKEN."
+        )
+    return starlette_app
+
+
+app = _build_app()
 
 
 def main() -> None:

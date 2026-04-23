@@ -9,6 +9,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .detail_extractor import ProductDetailExtractor
 from .naver_api import NaverShoppingClient
+from .utils import is_allowed_product_url
 
 log = logging.getLogger(__name__)
 
@@ -34,8 +35,46 @@ def _calculate_slots(_available_bytes: int | None = None) -> int:
 _browser_slots = _calculate_slots()
 _browser_semaphore = threading.Semaphore(_browser_slots)
 
+MAX_WAIT_SECONDS: float = 15.0
+MAX_DESCRIPTION_CHARS: int = 20_000
+
+
+def _clamp_wait_seconds(value: float) -> float:
+    """Cap wait_seconds so one request can't park the browser slot for hours."""
+    if value is None:
+        return 0.0
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if v < 0:
+        return 0.0
+    if v > MAX_WAIT_SECONDS:
+        return MAX_WAIT_SECONDS
+    return v
+
+
+def _clamp_max_chars(value: int) -> int:
+    """Cap description size so a request can't force huge MCP payloads."""
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return MAX_DESCRIPTION_CHARS
+    if v < 1:
+        return 1
+    if v > MAX_DESCRIPTION_CHARS:
+        return MAX_DESCRIPTION_CHARS
+    return v
+
+
 _BUSY_ERROR = {"error": "Server busy \u2013 all browser slots in use. Try again shortly."}
 _NO_BROWSER_ERROR = {"error": "Chromium is not available. Install chromium and restart the server."}
+_BLOCKED_URL_ERROR = {
+    "error": (
+        "URL host is not on the allowlist. Permitted hosts default to Naver "
+        "Shopping domains; extend with ALLOWED_PRODUCT_HOSTS env if needed."
+    )
+}
 
 
 mcp = FastMCP(
@@ -129,6 +168,11 @@ def get_product_detail(
     """
     if not _browser_available:
         return {**_NO_BROWSER_ERROR}
+    if not is_allowed_product_url(url):
+        log.warning("get_product_detail blocked non-allowlist url=%s", url)
+        return {**_BLOCKED_URL_ERROR}
+    wait_seconds = _clamp_wait_seconds(wait_seconds)
+    max_description_chars = _clamp_max_chars(max_description_chars)
     if not _browser_semaphore.acquire(timeout=60):
         log.warning("Browser semaphore timeout for get_product_detail url=%s", url)
         return {**_BUSY_ERROR}
@@ -168,6 +212,7 @@ def search_then_fetch_detail(
     """
     if not _browser_available:
         return {**_NO_BROWSER_ERROR}
+    wait_seconds = _clamp_wait_seconds(wait_seconds)
 
     log.info("search_then_fetch_detail query=%s pick=%d", query, pick)
     search = get_naver_client().search(
@@ -186,6 +231,21 @@ def search_then_fetch_detail(
     if index >= len(items):
         index = 0
     picked = items[index]
+
+    picked_link = picked.get("link", "")
+    if not is_allowed_product_url(picked_link):
+        log.warning(
+            "search_then_fetch_detail skipped non-allowlist link=%s", picked_link
+        )
+        return {
+            "search": search,
+            "picked": picked,
+            "detail": None,
+            "error": (
+                "Picked product's link host is not on the allowlist. "
+                "Extend ALLOWED_PRODUCT_HOSTS to include it."
+            ),
+        }
 
     if not _browser_semaphore.acquire(timeout=60):
         log.warning("Browser semaphore timeout for search_then_fetch_detail query=%s", query)
@@ -210,6 +270,10 @@ def capture_product_page(url: str, wait_seconds: float = 2.5) -> dict[str, Any]:
     """Capture page HTML and screenshot for debugging extractors."""
     if not _browser_available:
         return {**_NO_BROWSER_ERROR}
+    if not is_allowed_product_url(url):
+        log.warning("capture_product_page blocked non-allowlist url=%s", url)
+        return {**_BLOCKED_URL_ERROR}
+    wait_seconds = _clamp_wait_seconds(wait_seconds)
     if not _browser_semaphore.acquire(timeout=60):
         log.warning("Browser semaphore timeout for capture_product_page url=%s", url)
         return {**_BUSY_ERROR}

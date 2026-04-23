@@ -10,12 +10,18 @@ if [[ ! -f "$SERVICE_SRC" ]]; then
   exit 1
 fi
 
+SERVICE_USER="$(whoami)"
+SERVICE_HOME="$(getent passwd "$SERVICE_USER" | cut -d: -f6)"
+SERVICE_HOME="${SERVICE_HOME:-$HOME}"
+CACHE_DIR="$SERVICE_HOME/.cache/drission-shopping-mcp"
+
 TMP_FILE="$(mktemp)"
 sed \
-  -e "s|^User=.*|User=$(whoami)|" \
+  -e "s|^User=.*|User=$SERVICE_USER|" \
   -e "s|^WorkingDirectory=.*|WorkingDirectory=$APP_DIR|" \
   -e "s|^EnvironmentFile=.*|EnvironmentFile=$APP_DIR/.env|" \
   -e "s|^ExecStart=.*|ExecStart=$APP_DIR/.venv/bin/python -m shopping_mcp.asgi|" \
+  -e "s|^ReadWritePaths=.*|ReadWritePaths=$APP_DIR $CACHE_DIR|" \
   "$SERVICE_SRC" > "$TMP_FILE"
 
 sudo cp "$TMP_FILE" "$SERVICE_DST"

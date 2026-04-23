@@ -42,7 +42,9 @@ LimitNOFILE=4096
 TasksMax=256
 
 # Allow writing only to the app dir (for debug_captures) and the chromium
-# user-data-dir. Adjust paths if your layout differs from DEPLOY.md.
+# user-data-dir. scripts/install_systemd_pi.sh rewrites this line to match
+# the current user's HOME — edit by hand only if installing the unit
+# without the helper script.
 ReadWritePaths=/home/pi/drission-shopping-mcp /home/pi/.cache/drission-shopping-mcp
 
 # NOTE: The following directives further reduce risk but may break chromium

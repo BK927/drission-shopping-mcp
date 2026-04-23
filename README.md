@@ -66,6 +66,32 @@ python -m shopping_mcp.asgi
 - 디버그 캡처 rotation (최근 50개) + HTML 2MB cap
 - systemd 샌드박싱 (`NoNewPrivileges`, `ProtectSystem=strict`, `ProtectProc=invisible`, `CapabilityBoundingSet=` 빈값 등)
 
+## 어디서 돌아가나 (Pi 가 아니어도 됨)
+
+"Pi" 로 이름은 붙어 있지만 실제로는 **일반 Linux 서버 어디서든 동일하게 동작** 합니다. 코드는 OS/아키텍처 종속성이 없고, `scripts/install_systemd_pi.sh` 가 현재 유저/경로/홈 디렉토리를 자동으로 치환해서 systemd unit 을 설치합니다.
+
+전제 조건은 이 정도입니다.
+
+- **Linux + systemd** (Debian, Ubuntu, Raspberry Pi OS 모두 OK). RHEL 계열도 systemd 는 같지만 chromium 패키지 이름이 다를 수 있음.
+- **Python 3.10+** — `requires-python = ">=3.10"` 이라 Ubuntu 22.04 이상이면 기본 OK.
+- **Chromium 계열 바이너리** — `apt install chromium` (Debian/Ubuntu) 또는 동등한 패키지. `.env` 의 `DP_BROWSER_PATH` 가 실제 설치 경로와 일치해야 합니다.
+- **RAM 1GB 이상 권장** — Chromium 이 요구. 512MB 이하에서는 스왑을 잡거나 그냥 다른 서버를 쓰세요.
+- **공인 IP 는 불필요** — Cloudflare Tunnel 이 outbound 연결로 붙습니다. 포트 포워딩 / 방화벽 인바운드 규칙 필요 없음.
+
+### 다른 서버에서 고려할 점
+
+실제로 Pi 가 아닌 서버에서 돌릴 때 부딪힐 수 있는 현실적 이슈:
+
+1. **네이버 봇 감지와 IP 대역**: 네이버 쇼핑 API 자체는 IP 무관하게 동작합니다. 그러나 `get_product_detail` 이 여는 **실제 상품 페이지** 는 해외 IP 에서 더 자주 차단되거나 캡차가 뜹니다. 스크래핑 품질이 중요하면 **국내 IP 대역의 서버** (국내 VPS, 국내 리전) 를 고르는 쪽이 실질적입니다.
+
+2. **ARM vs x86**: 둘 다 문제 없이 동작합니다. DrissionPage 의존성인 `lxml`, `pydantic` 바이너리 휠이 양쪽 다 제공되고, Chromium apt 패키지도 양쪽 아키텍처 모두 나옵니다.
+
+3. **작은 인스턴스에서 장시간 구동**: Chromium 은 오래 돌면 메모리를 조금씩 더 먹습니다. `BrowserManager._is_page_alive` 가 죽은 탭은 자동 재생성하지만, 1GB 이하 VPS 에서는 보험으로 **주 1회 `systemctl restart shopping-mcp` cron** 을 걸어두는 게 안전합니다.
+
+4. **경로**: `.env` 의 `DP_USER_DATA_DIR=~/.cache/drission-shopping-mcp` 는 `~` 를 런타임에 서비스 유저 홈으로 확장해서 그대로 통용됩니다. `scripts/install_systemd_pi.sh` 는 `User`, `WorkingDirectory`, `ReadWritePaths` 를 현재 유저/경로 기준으로 자동 치환하므로 Pi 든 Ubuntu VPS 든 같은 명령으로 설치됩니다.
+
+5. **PaaS (Render, Railway, Fly 등) 는 피하세요**: headless Chromium + 상시 가동이 필요한 구조라 스핀다운 / 컨테이너 제약이 있는 플랫폼은 잘 안 맞습니다. 가상머신 수준의 리눅스 쉘 접근이 있는 VPS 가 훨씬 편합니다.
+
 ## 라즈베리파이 실배포
 
 실배포용으로 아래 파일을 추가했습니다.

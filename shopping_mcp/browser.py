@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .utils import _get_allowed_product_hosts
+
 log = logging.getLogger(__name__)
 
 
@@ -63,6 +65,9 @@ class BrowserManager:
         co.set_argument("--disable-gpu")
         co.set_argument("--disable-blink-features=AutomationControlled")
 
+        for arg in self._hardening_args():
+            co.set_argument(arg)
+
         if self.config.user_data_dir:
             user_data_dir = str(Path(self.config.user_data_dir).expanduser())
             if hasattr(co, "set_user_data_path"):
@@ -77,6 +82,39 @@ class BrowserManager:
                 co.set_paths(browser_path=self.config.browser_path)
 
         return co
+
+    def _hardening_args(self) -> list[str]:
+        """Chromium flags that shrink the attack surface of a --no-sandbox
+        renderer. Safe defaults; no functional impact on product scraping.
+
+        --host-resolver-rules is the belt-and-suspenders against redirect-to-
+        internal-IP: Chromium itself refuses DNS for anything outside the
+        URL allowlist, so even if an allowlisted page tries to pivot the
+        browser via 302/JS/meta-refresh to 169.254.169.254 it cannot resolve.
+        """
+        args = [
+            "--disable-extensions",
+            "--disable-plugins",
+            "--disable-sync",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-domain-reliability",
+            "--disable-features=Translate,MediaRouter,OptimizationHints,"
+            "AutofillServerCommunication",
+        ]
+        allowed = _get_allowed_product_hosts()
+        if allowed:
+            # EXCLUDE each allowed host (and its subdomains via wildcard),
+            # then MAP everything else to NOTFOUND so DNS resolution fails.
+            excludes = []
+            for host in sorted(allowed):
+                excludes.append(f"EXCLUDE {host}")
+                excludes.append(f"EXCLUDE *.{host}")
+            rules = ",".join(excludes + ["MAP * ~NOTFOUND"])
+            args.append(f"--host-resolver-rules={rules}")
+        return args
 
     def _new_page(self) -> Any:
         from DrissionPage import ChromiumPage

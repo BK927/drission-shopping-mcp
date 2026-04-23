@@ -18,11 +18,13 @@ from .utils import (
     clip_text,
     domain_for_url,
     ensure_dir,
+    is_allowed_product_url,
     is_naver_store_domain,
     load_json_maybe,
     normalize_text,
     parse_price,
     prune_capture_dir,
+    safe_host_for_dirname,
 )
 
 log = logging.getLogger(__name__)
@@ -31,6 +33,9 @@ log = logging.getLogger(__name__)
 class ProductDetailExtractor:
     # Number of most-recent capture subdirectories to keep on disk.
     MAX_DEBUG_CAPTURES = 50
+    # Cap on the bytes we write for a single capture's HTML — stops a
+    # hostile page from filling the Pi's SD card through repeated captures.
+    MAX_DEBUG_HTML_BYTES = 2 * 1024 * 1024
 
     def __init__(self, browser: BrowserManager | None = None) -> None:
         self.browser = browser or BrowserManager()
@@ -203,12 +208,14 @@ class ProductDetailExtractor:
         return {}
 
     def _save_debug(self, url: str, html_text: str, page: Any) -> dict[str, str]:
-        host = urlparse(url).netloc.replace(":", "_") or "page"
+        host = safe_host_for_dirname(urlparse(url).hostname)
         ts = time.strftime("%Y%m%d-%H%M%S")
         base_dir = ensure_dir(self.debug_dir / f"{ts}-{host}")
         html_path = base_dir / "page.html"
         png_path = base_dir / "page.png"
-        html_path.write_text(html_text, encoding="utf-8")
+        if len(html_text.encode("utf-8", errors="replace")) > self.MAX_DEBUG_HTML_BYTES:
+            html_text = html_text[: self.MAX_DEBUG_HTML_BYTES]
+        html_path.write_text(html_text, encoding="utf-8", errors="replace")
         try:
             page.get_screenshot(str(png_path))
         except Exception:
@@ -226,14 +233,33 @@ class ProductDetailExtractor:
         wait_seconds: float = 2.5,
         max_description_chars: int = 6000,
         save_debug: bool = False,
-        reset_browser: bool = False,
     ) -> dict[str, Any]:
-        if reset_browser:
-            self.browser.reset()
-
+        # Dead-tab detection in BrowserManager.get_page auto-rebuilds a
+        # crashed tab — no caller-facing reset knob is needed (and exposing
+        # one lets an authenticated caller force repeated slow restarts).
         page = self.browser.get_page()
         page.get(url)
         time.sleep(max(0.2, wait_seconds))
+
+        # After navigation, the page may have followed redirects (HTTP 3xx,
+        # meta-refresh, JS nav). Re-validate the final URL before we read
+        # anything off the page — a compromised allowlisted origin could
+        # otherwise steer the browser to an internal IP and leak the result.
+        final_url = getattr(page, "url", "") or ""
+        if final_url and not is_allowed_product_url(final_url):
+            log.warning(
+                "extract aborted — final URL left allowlist: source=%s final=%s",
+                url,
+                final_url,
+            )
+            return {
+                "error": (
+                    "Navigation ended at a URL outside the allowlist "
+                    "(possible redirect). Result discarded."
+                ),
+                "source_url": url,
+                "final_url": final_url,
+            }
 
         html_text = getattr(page, "html", "") or ""
         title = getattr(page, "title", "") or ""

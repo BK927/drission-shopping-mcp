@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .detail_extractor import ProductDetailExtractor
 from .naver_api import NaverShoppingClient
-from .utils import is_allowed_product_url
+from .utils import canonicalize_product_url
 
 log = logging.getLogger(__name__)
 
@@ -155,7 +155,6 @@ def get_product_detail(
     wait_seconds: float = 2.5,
     max_description_chars: int = 6000,
     save_debug: bool = False,
-    reset_browser: bool = False,
 ) -> dict[str, Any]:
     """Open a product page in DrissionPage and extract detail data.
 
@@ -164,26 +163,25 @@ def get_product_detail(
         wait_seconds: Time to wait after page.get(). Increase for heavy JS pages.
         max_description_chars: Clip long descriptions to this length.
         save_debug: Save HTML/screenshot under DEBUG_CAPTURE_DIR.
-        reset_browser: Restart browser before opening the page.
     """
     if not _browser_available:
         return {**_NO_BROWSER_ERROR}
-    if not is_allowed_product_url(url):
+    canonical = canonicalize_product_url(url)
+    if canonical is None:
         log.warning("get_product_detail blocked non-allowlist url=%s", url)
         return {**_BLOCKED_URL_ERROR}
     wait_seconds = _clamp_wait_seconds(wait_seconds)
     max_description_chars = _clamp_max_chars(max_description_chars)
     if not _browser_semaphore.acquire(timeout=60):
-        log.warning("Browser semaphore timeout for get_product_detail url=%s", url)
+        log.warning("Browser semaphore timeout for get_product_detail url=%s", canonical)
         return {**_BUSY_ERROR}
     try:
-        log.info("get_product_detail url=%s", url)
+        log.info("get_product_detail url=%s", canonical)
         return get_detail_extractor().extract(
-            url,
+            canonical,
             wait_seconds=wait_seconds,
             max_description_chars=max_description_chars,
             save_debug=save_debug,
-            reset_browser=reset_browser,
         )
     except Exception:
         log.error("get_product_detail failed url=%s", url, exc_info=True)
@@ -233,7 +231,8 @@ def search_then_fetch_detail(
     picked = items[index]
 
     picked_link = picked.get("link", "")
-    if not is_allowed_product_url(picked_link):
+    canonical_link = canonicalize_product_url(picked_link)
+    if canonical_link is None:
         log.warning(
             "search_then_fetch_detail skipped non-allowlist link=%s", picked_link
         )
@@ -252,7 +251,7 @@ def search_then_fetch_detail(
         return {"search": search, "picked": picked, "detail": None, "error": "Server busy \u2013 all browser slots in use. Try again shortly."}
     try:
         detail = get_detail_extractor().extract(
-            picked["link"],
+            canonical_link,
             wait_seconds=wait_seconds,
             save_debug=save_debug,
         )
@@ -270,17 +269,18 @@ def capture_product_page(url: str, wait_seconds: float = 2.5) -> dict[str, Any]:
     """Capture page HTML and screenshot for debugging extractors."""
     if not _browser_available:
         return {**_NO_BROWSER_ERROR}
-    if not is_allowed_product_url(url):
+    canonical = canonicalize_product_url(url)
+    if canonical is None:
         log.warning("capture_product_page blocked non-allowlist url=%s", url)
         return {**_BLOCKED_URL_ERROR}
     wait_seconds = _clamp_wait_seconds(wait_seconds)
     if not _browser_semaphore.acquire(timeout=60):
-        log.warning("Browser semaphore timeout for capture_product_page url=%s", url)
+        log.warning("Browser semaphore timeout for capture_product_page url=%s", canonical)
         return {**_BUSY_ERROR}
     try:
-        log.info("capture_product_page url=%s", url)
+        log.info("capture_product_page url=%s", canonical)
         detail = get_detail_extractor().extract(
-            url,
+            canonical,
             wait_seconds=wait_seconds,
             save_debug=True,
             max_description_chars=1200,

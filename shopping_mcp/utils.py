@@ -119,42 +119,86 @@ def _get_allowed_product_hosts() -> frozenset[str]:
     return frozenset(h.strip().lower() for h in raw.split(",") if h.strip())
 
 
-def is_allowed_product_url(url: str) -> bool:
-    """Whether a URL is safe to hand to the browser.
+# Bytes that Python's RFC 3986 urlparse and Chromium's WHATWG URL parser
+# handle differently. A single backslash inside the authority is the classic
+# SSRF bypass: urlparse treats it as normal, WHATWG rewrites it to '/'.
+# Rejecting them at the raw-string level keeps both parsers in lockstep.
+_URL_FORBIDDEN_CHARS = ("\\", "\t", "\n", "\r", "\x00", " ")
 
-    Enforces scheme (http/https only), disallows numeric hosts pointing at
-    private / link-local / loopback ranges, and requires the host to match
-    the allowlist (exact match or dotted subdomain).
+
+def canonicalize_product_url(url: str) -> str | None:
+    """Validate and return a canonical URL safe to hand to Chromium.
+
+    Returns None if the URL contains parser-differential bytes, uses a
+    non-http(s) scheme, points at a reserved IP literal, or fails the
+    allowlist. When it returns a string, that string has been reconstructed
+    from urlparse's components (userinfo and fragment dropped) so callers
+    can pass the return value — not the raw input — to the browser, and
+    what we validated is exactly what navigates.
     """
     if not url:
-        return False
+        return None
+    if any(c in url for c in _URL_FORBIDDEN_CHARS):
+        return None
     try:
         parsed = urlparse(url)
     except Exception:
-        return False
-    if parsed.scheme not in ("http", "https"):
-        return False
+        return None
+
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        return None
     host = (parsed.hostname or "").strip().lower()
     if not host:
-        return False
+        return None
 
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
         ip = None
-    if ip is not None:
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
-            return False
+    if ip is not None and (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    ):
+        return None
 
     allowed = _get_allowed_product_hosts()
-    return any(host == h or host.endswith("." + h) for h in allowed)
+    if not any(host == h or host.endswith("." + h) for h in allowed):
+        return None
+
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    port_part = f":{port}" if port else ""
+    path = parsed.path or "/"
+    query_part = f"?{parsed.query}" if parsed.query else ""
+    return f"{scheme}://{host}{port_part}{path}{query_part}"
+
+
+def is_allowed_product_url(url: str) -> bool:
+    """True iff canonicalize_product_url accepts the URL."""
+    return canonicalize_product_url(url) is not None
+
+
+_DIRNAME_SAFE_RE = re.compile(r"[^a-zA-Z0-9.\-]")
+
+
+def safe_host_for_dirname(host: str | None) -> str:
+    """Turn a hostname into a filesystem-safe directory fragment.
+
+    Only [a-zA-Z0-9.-] are preserved; anything else becomes '_'. Empty or
+    None becomes 'page'. Avoids null bytes, percent-encoded path separators,
+    and other operator-hostile characters landing inside debug_captures/.
+    """
+    if not host:
+        return "page"
+    cleaned = _DIRNAME_SAFE_RE.sub("_", host)
+    return cleaned or "page"
 
 
 def prune_capture_dir(debug_dir: str | Path, keep: int) -> None:

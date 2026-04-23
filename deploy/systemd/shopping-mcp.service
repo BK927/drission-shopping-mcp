@@ -22,12 +22,37 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
 RestrictSUIDSGID=true
 LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Hide other processes' /proc entries (env vars etc.) from this unit.
+ProtectProc=invisible
+ProcSubset=pid
+# Resource caps — a runaway request loop cannot exhaust the Pi.
+LimitNOFILE=4096
+TasksMax=256
+
 # Allow writing only to the app dir (for debug_captures) and the chromium
 # user-data-dir. Adjust paths if your layout differs from DEPLOY.md.
 ReadWritePaths=/home/pi/drission-shopping-mcp /home/pi/.cache/drission-shopping-mcp
+
+# NOTE: The following directives further reduce risk but may break chromium
+# on some Pi images — enable after verifying `systemctl status` stays green:
+#   PrivateUsers=true
+#   SystemCallFilter=@system-service
+#   SystemCallFilter=~@resources @privileged @obsolete
+#   SystemCallErrorNumber=EPERM
+# MemoryDenyWriteExecute=true is incompatible with V8 JIT — keep disabled
+# unless you also pass --js-flags=--jitless to Chromium.
 
 [Install]
 WantedBy=multi-user.target

@@ -73,6 +73,12 @@ def _is_request_authorized(expected_token: str, auth_header: str | None) -> bool
     presented = auth_header[len(_BEARER_PREFIX):].strip()
     if not presented:
         return False
+    # hmac.compare_digest raises TypeError on non-ASCII str inputs, which
+    # would surface as an unhandled 500 with a traceback in journald. Valid
+    # Bearer tokens are ASCII per RFC 6750 (base64/url-safe), so anything
+    # else is rejected outright.
+    if not presented.isascii() or not expected_token.isascii():
+        return False
     return hmac.compare_digest(presented, expected_token)
 
 
@@ -160,6 +166,26 @@ def _build_app() -> Starlette:
 app = _build_app()
 
 
+def _resolve_bind_host() -> str:
+    """Pick the host to bind to, failing closed when no auth token is set.
+
+    An unset MCP_AUTH_TOKEN means /mcp is unauthenticated. In that case we
+    force 127.0.0.1 regardless of FASTMCP_HOST so a forgotten token can
+    never turn into a public-internet exposure. Operators who truly want
+    0.0.0.0 must set a token (or front the server with Cloudflare Access).
+    """
+    configured = os.getenv("FASTMCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    token = os.getenv("MCP_AUTH_TOKEN", "").strip()
+    if not token and configured != "127.0.0.1":
+        log.warning(
+            "MCP_AUTH_TOKEN not set — refusing FASTMCP_HOST=%s and binding to "
+            "127.0.0.1 instead. Set a token to listen publicly.",
+            configured,
+        )
+        return "127.0.0.1"
+    return configured
+
+
 def main() -> None:
     # .env is already loaded at package import time (shopping_mcp/__init__.py).
     logging.basicConfig(
@@ -167,7 +193,7 @@ def main() -> None:
         level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
         stream=sys.stderr,
     )
-    host = os.getenv("FASTMCP_HOST", "127.0.0.1")
+    host = _resolve_bind_host()
     port = int(os.getenv("FASTMCP_PORT", "8000"))
     uvicorn.run("shopping_mcp.asgi:app", host=host, port=port, reload=False)
 

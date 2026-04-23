@@ -78,20 +78,51 @@ class BrowserManager:
 
         return co
 
+    def _new_page(self) -> Any:
+        from DrissionPage import ChromiumPage
+
+        log.info("Starting Chromium browser")
+        options = self._build_options()
+        try:
+            return ChromiumPage(options)
+        except Exception:
+            log.error("Failed to start Chromium browser", exc_info=True)
+            raise
+
+    @staticmethod
+    def _is_page_alive(page: Any) -> bool:
+        """Best-effort check that a cached ChromiumPage still has a live tab.
+
+        DrissionPage doesn't expose a consistent `is_alive` across versions,
+        so we probe a cheap attribute and treat any exception as "dead".
+        """
+        if page is None:
+            return False
+        states = getattr(page, "states", None)
+        if states is not None and hasattr(states, "is_alive"):
+            try:
+                return bool(states.is_alive)
+            except Exception:
+                return False
+        try:
+            _ = page.url
+            return True
+        except Exception:
+            return False
+
     def get_page(self) -> Any:
         with self._lock:
             if self._page is not None:
-                return self._page
+                if self._is_page_alive(self._page):
+                    return self._page
+                log.warning("Cached ChromiumPage looks dead — rebuilding")
+                try:
+                    self._page.quit()
+                except Exception:
+                    pass
+                self._page = None
 
-            from DrissionPage import ChromiumPage
-
-            log.info("Starting Chromium browser")
-            options = self._build_options()
-            try:
-                self._page = ChromiumPage(options)
-            except Exception:
-                log.error("Failed to start Chromium browser", exc_info=True)
-                raise
+            self._page = self._new_page()
             return self._page
 
     def reset(self) -> None:

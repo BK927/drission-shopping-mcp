@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
-import re
 import threading
 from functools import lru_cache
 from typing import Any
@@ -22,42 +20,15 @@ def set_browser_available(available: bool) -> None:
     _browser_available = available
 
 
-def _read_available_memory_bytes() -> int | None:
-    """Read available memory from /proc/meminfo (Linux only)."""
-    try:
-        with open("/proc/meminfo") as f:
-            for line in f:
-                if line.startswith("MemAvailable:"):
-                    match = re.search(r"(\d+)", line)
-                    if match:
-                        return int(match.group(1)) * 1024  # kB -> bytes
-    except OSError:
-        pass
-    return None
+def _calculate_slots(_available_bytes: int | None = None) -> int:
+    """Max concurrent browser slots.
 
-
-def _calculate_slots(available_bytes: int | None = None) -> int:
-    """Determine max concurrent browser slots from available memory."""
-    env_override = os.getenv("MAX_BROWSER_SLOTS", "").strip()
-    try:
-        val = int(env_override)
-        if val > 0:
-            return val
-    except ValueError:
-        pass
-
-    if available_bytes is None:
-        available_bytes = _read_available_memory_bytes()
-
-    if available_bytes is None:
-        return 1  # unknown system, be conservative
-
-    gb = available_bytes / (1024 ** 3)
-    if gb < 1:
-        return 1
-    if gb < 2:
-        return 2
-    return 3
+    Always 1: BrowserManager owns a single ChromiumPage, so running more than
+    one browser tool at a time would race on the shared tab. The argument and
+    MAX_BROWSER_SLOTS env var are accepted but ignored; when BrowserManager
+    grows a real page pool, this function is the place to return its size.
+    """
+    return 1
 
 
 _browser_slots = _calculate_slots()

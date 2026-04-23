@@ -6,7 +6,6 @@ import os
 import shutil
 import sys
 
-from dotenv import load_dotenv
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
@@ -55,6 +54,20 @@ async def healthz(_request):
     return JSONResponse({"status": "ok"})
 
 
+def _shutdown_browser() -> None:
+    """Close the shared Chromium page so systemd restarts don't leak procs.
+
+    Called from lifespan shutdown. Import is deferred so test monkeypatching
+    of get_detail_extractor survives module load order.
+    """
+    from .server import get_detail_extractor
+
+    try:
+        get_detail_extractor().browser.reset()
+    except Exception:
+        log.warning("Browser shutdown failed", exc_info=True)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_app: Starlette):
     status = validate_startup()
@@ -81,8 +94,11 @@ async def lifespan(_app: Starlette):
         _browser_slots,
     )
 
-    async with mcp.session_manager.run():
-        yield
+    try:
+        async with mcp.session_manager.run():
+            yield
+    finally:
+        _shutdown_browser()
 
 
 app = Starlette(
@@ -95,7 +111,7 @@ app = Starlette(
 
 
 def main() -> None:
-    load_dotenv()
+    # .env is already loaded at package import time (shopping_mcp/__init__.py).
     logging.basicConfig(
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
         level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),

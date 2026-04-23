@@ -130,10 +130,15 @@ class ProductDetailExtractor:
         else:
             brand_name = brand
 
-        images = product.get("image")
-        if isinstance(images, str):
-            images = [images]
-        elif not isinstance(images, list):
+        images_raw = product.get("image")
+        if isinstance(images_raw, str):
+            images = [images_raw]
+        elif isinstance(images_raw, list):
+            # Schema.org allows ImageObject dicts here; drop anything that
+            # isn't a plain URL string so downstream consumers get a clean
+            # list[str] and absolutize_url doesn't silently no-op on dicts.
+            images = [x for x in images_raw if isinstance(x, str)]
+        else:
             images = []
 
         return {
@@ -230,7 +235,7 @@ class ProductDetailExtractor:
         jsonld_products = self._load_jsonld_products(dom_probe.get("jsonLd", []))
         jsonld_result = self._extract_jsonld(jsonld_products)
         if jsonld_result.get("images"):
-            jsonld_result["images"] = [absolutize_url(u, url) for u in jsonld_result["images"] if u]
+            jsonld_result["images"] = [absolutize_url(u, url) for u in jsonld_result["images"]]
         adapter_result = self._site_adapter(url, soup)
         fallback_result = self._build_dom_fallback(soup, dom_probe, url)
         merged = self._merge(jsonld_result, adapter_result, fallback_result)
